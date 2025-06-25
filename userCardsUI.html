@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>User Cards with Status</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #303030;
+      padding: 20px;
+    }
+    .user-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+    .user-card {
+      background-color: rgb(153, 153, 153);
+      border-radius: 10px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      width: 220px;
+      padding: 15px;
+      text-align: center;
+    }
+    .user-card img {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      object-fit: cover;
+      margin-bottom: 10px;
+    }
+    .user-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 5px;
+      font-weight: bold;
+      font-size: 1.1em;
+      color: white
+    }
+    .status-circle {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      display: inline-block;
+      border: 1px solid #ccc;
+    }
+    /* Status colors */
+    .status-joinme {
+      background-color: #a0c8ff; /* light blue */
+    }
+    .status-online {
+      background-color: #aaff80; /* lime green */
+    }
+    .status-askme {
+      background-color: #ffa840; /* orange */
+    }
+    .status-dnd {
+      background-color: #ff4040; /* red */
+    }
+    .instance {
+      font-size: 0.9em;
+      color: #f7f7f7;
+      margin-bottom: 6px;
+    }
+    .status-message {
+      font-size: 0.85em;
+      font-style: italic;
+      color: #ffffff;
+      min-height: 1.2em;
+    }
+    h1 {
+      color: white
+    }
+  </style>
+</head>
+<body>
+  <h1>Good evening, CherryRetriever!</h1>
+  <div class="user-container" id="userContainer"></div>
+
+  <script>
+    // Sample user data including status and status message
+    function statusStringToCircle(status) {
+      switch (statusCircle) //Check for possible status messages, converting them to notation needed to grab correct circle.
+      { //status will always be in "active" | "join me" | "ask me" | "busy" | "offline"
+        case "active": return "active";
+        case "join me": return "joinme";
+        case "ask me": return "askme";
+        case "busy": return "dnd";
+        case "offline": return "offline";
+      }
+    }
+    const users = [
+      {
+        username: "CoolCat42",
+        instance: "Lobby A",
+        profilePic: "https://i.pravatar.cc/80?img=1",
+        status: "joinme",
+        statusMessage: "Ready to play!"
+      },
+      {
+        username: "JaneDoe",
+        instance: "Instance 7",
+        profilePic: "https://i.pravatar.cc/80?img=2",
+        status: "online",
+        statusMessage: "Exploring new quests"
+      },
+      {
+        username: "VRNinja",
+        instance: "Training Grounds",
+        profilePic: "https://i.pravatar.cc/80?img=3",
+        status: "askme",
+        statusMessage: "Need help with gear?"
+      },
+      {
+        username: "NeonKnight",
+        instance: "Arena 3",
+        profilePic: "https://i.pravatar.cc/80?img=4",
+        status: "dnd",
+        statusMessage: "Do not disturb, busy!"
+      }
+    ];
+
+    const container = document.getElementById('userContainer');
+
+    users.forEach(user => {
+      const card = document.createElement('div');
+      card.className = 'user-card';
+
+      card.innerHTML = `
+        <img src="${user.currentAvatarThumbnailImageUrl}" alt="${user.displayName}'s profile picture" />
+        <div class="user-header">
+          <span class="status-circle status-${statusStringToCircle(user.status)}" title="${user.status.replace(/^\w/, c => c.toUpperCase())}"></span>
+          <span>${user.displayName}</span>
+        </div>
+        <div class="instance">${user.instance}</div>
+        <div class="status-message">${user.statusDescription || ''}</div>
+      `;
+
+      container.appendChild(card);
+    });
+  </script>
+</body>
+</html>
