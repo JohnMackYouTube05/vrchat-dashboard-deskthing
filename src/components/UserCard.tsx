@@ -12,7 +12,7 @@ const statusClassMap = {
 };
 
 const deskThing = createDeskThing();
-async function getWorldData(WorldId: string): Promise<any> {
+export async function getWorldData(WorldId: string): Promise<any> {
   return new Promise((resolve, reject) => {
     deskThing.fetch(
       { type: 'get', request: 'world', payload: { world: WorldId } },
@@ -30,7 +30,7 @@ async function getWorldData(WorldId: string): Promise<any> {
   });
 }
 
-function getFriendlyStatusDescription(status: string) : string
+export function getFriendlyStatusDescription(status: string) : string
 {
   switch (status)
   {
@@ -129,7 +129,6 @@ const UserCard = ({ user }: { user: LimitedUser }) => {
         alt={`${user.displayName}'s profile`}
         className="w-20 h-20 rounded-full shadow-gray-900 shadow-lg mx-auto"
       />
-
       <div className="flex items-center justify-center gap-2 font-bold text-lg text-white">
         <span
           className={`w-4 h-4 rounded-full ${statusColors[statusClass]}`}

@@ -1,4 +1,4 @@
-import {LimitedUser, DeveloperType, UserStatus} from 'vrchat';
+import {LimitedUser, DeveloperType, UserStatus, World, Instance} from 'vrchat';
 export type LimitedUserType = {
     bio: string;
     bioLinks: string[];
@@ -72,7 +72,7 @@ export interface ILimitedUserDTO {
       Object.assign(this, dto);
     }
   
-
+    
     
     static fromVRCLimitedUser(user: LimitedUser)
     {
@@ -140,6 +140,13 @@ export type FriendsListRequestData =
     INTERNAL = "internal",
     MODERATOR = "moderator"
 }*/
+
+export type CombinedUser
+{
+  user: LimitedUser
+  world: World;
+  instance: Instance;
+}
 
 export enum UserStatus {
     JOINME = "join me",

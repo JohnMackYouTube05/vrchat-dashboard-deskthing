@@ -1,5 +1,7 @@
 cookies.json
 node_modules
 dist
+.vscode
 images
 *.bak
+*.bak2
