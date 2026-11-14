@@ -1,12 +1,10 @@
-import {User, World, Instance, InstanceType} from 'vrchat';
-//import { createDeskThing } from '@deskthing/client';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useUserContext } from '../context/UserContext';
-import {getWorldData, getFriendlyStatusDescription} from '../components/UserCard';
-import { useEffect, useState } from "react";
+import { useEffect, useState } from 'react';
+import { dt } from '../deskthing';
+import { profileImages } from '../types/profile';
+import ProfileImage from '../components/ProfileImage';
 
-//const deskThing = createDeskThing();
-/*THIS FUNCTIONALITY IS NOT FINISHED YET. I'LL BE FINISHING IT SOON.*/
 const statusClassMap = {
   "join me": 'joinme',
   "active": 'online',
@@ -18,10 +16,39 @@ const ViewUser = () => {
     const { username } = useParams();
     const navigate = useNavigate();
     const { users } = useUserContext();
-    console.log("CombinedUsers:", users);
     const user = users.find(
         (u) => u.user.displayName.toLowerCase() === username?.toLowerCase()
     );
+    const id = user?.user.id;
+    const [profileError, setProfileError] = useState('');
+    const [loading, setLoading] = useState(false);
+    const [attempt, setAttempt] = useState(0);
+    useEffect(() => {
+        if (!id) return;
+        setLoading(true);
+        setProfileError('');
+        const timeout = setTimeout(() => { setLoading(false); setProfileError('Profile loading timed out. Try again.'); }, 45_000);
+        const removeProfile = dt.on('vrc_profile', data => {
+            try {
+                if (JSON.parse(data.payload).id !== id) return;
+                clearTimeout(timeout);
+                setLoading(false);
+                setProfileError('');
+            } catch { /* Ignore unrelated malformed responses. */ }
+        });
+        const removeError = dt.on('vrc_profile_error', data => {
+            try {
+                const error = JSON.parse(data.payload);
+                if (error.id !== id) return;
+                clearTimeout(timeout);
+                setLoading(false);
+                setProfileError(error.message);
+            } catch { /* Ignore unrelated malformed responses. */ }
+        });
+        try { dt.send({ type: 'vrc_request', request: 'profile', payload: { userId: id } }); }
+        catch { clearTimeout(timeout); setLoading(false); setProfileError('Could not contact DeskThing. Try again.'); }
+        return () => { clearTimeout(timeout); removeProfile(); removeError(); };
+    }, [id, attempt]);
     if (!user) {
         return (
         <div className="p-6 text-red-600">
@@ -46,12 +73,6 @@ const ViewUser = () => {
     };
     
 
-    const [worldThumbnail, setWorldThumbnail] = useState<string>();
-    const [profilePicture, setProfilePicture] = useState<string>();
-    
-    useEffect(() => {
-        setWorldThumbnail(world ? world.imageUrl : "No image found.");
-    });
     return (
             <div className="flex items-center justify-center flex-row">
                 <div className="grid grid-cols-1 grid-rows-3 bg-blue-900 rounded-xl max-w-3xl grid-rows-subgrid h-fit">
@@ -63,20 +84,23 @@ const ViewUser = () => {
                             
                         </button>
                     <div className="flex flex-row gap-2">
-                        <img className="rounded-3xl p-3" id="profile-picture" src={user.user.profilePicOverride}></img>
-                        <div className="flex flex-col gap-2">
+                        <ProfileImage key={`${id}:${attempt}`} sources={[user.profile?.imageUrl, user.imageUrl, ...profileImages(user.user)]}
+                            name={user.user.displayName} className="rounded-3xl m-3 w-32 h-32 object-cover shrink-0" />
+                        <div className="flex flex-col gap-2 min-w-0 flex-1">
                             <div className="flex items-center justify-center gap-2 font-bold text-lg">
                                 <span className={`w-4 h-4 rounded-full ${statusColors[statusClass]}`} title="Join me" id="status-circle"></span>
                                 <p className="font-bold text-4xl space-y-20 text-blue-400 text" id="display-name">{user.user.displayName}</p>
                             </div>
-                            <span className="font-semibold text-2xl text-white text-center" id="pronouns">{user.user.pronouns}</span> 
+                            <span className="font-semibold text-2xl text-white text-center" id="pronouns">{user.profile?.pronouns ?? user.user.pronouns}</span>
                             <span className="font-medium text-lg text-white text-center h-6 max-h-12" id="status-description">{user.user.statusDescription}</span>                             
-                            <p className="font-normal text-medium text-white space-x-5" id="bio">{user.user.bio}</p>
+                            <p className="font-normal text-medium text-white whitespace-pre-wrap break-words max-h-36 overflow-y-auto" id="bio">{user.profile?.bio ?? user.user.bio ?? (loading ? 'Loading bio...' : '')}</p>
+                            {profileError && <p role="status" className="text-amber-200">{profileError}</p>}
+                            {profileError && <button className="text-white underline" onClick={() => setAttempt(previous => previous + 1)}>Retry Profile</button>}
                         </div>
                     </div>
                     <div className="grid grid-rows-1 grid-cols-1 max-w-full space-x-3 p-2">
                         <div className="bg-gray-800 flex rounded-xl p-3 w-full h-44">
-                            <img className="rounded-lg w-52 h-32 object-cover" src={worldThumbnail}></img> 
+                            {world?.imageUrl && <img className="rounded-lg w-52 h-32 object-cover" src={world.imageUrl} alt={world.name} />}
                             <div className="p-1 grid grid-rows-4 grid-cols-1">
                                 <p className="text-4xl text-white font-bold space-y-8" id="worldName">{world ? world.name : statusClass}</p>
                                 <p className="text-2xl space-y-2 text-white font-semibold" id="instanceType">{instance?.type.toString()}</p> 

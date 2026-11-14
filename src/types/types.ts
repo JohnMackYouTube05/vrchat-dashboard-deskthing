@@ -1,4 +1,5 @@
-import {LimitedUser, DeveloperType, UserStatus, World, Instance} from 'vrchat';
+import type {LimitedUser, DeveloperType, UserStatus, World, Instance} from 'vrchat';
+import type { DashboardUser, ProfileDetails } from './profile';
 export type LimitedUserType = {
     bio: string;
     bioLinks: string[];
@@ -76,7 +77,7 @@ export interface ILimitedUserDTO {
     
     static fromVRCLimitedUser(user: LimitedUser)
     {
-        let u = new OurLimitedUser();
+        const u = new OurLimitedUser();
         u.bio = user.bio?.toString() ?? '';
         u.bioLinks = user.bioLinks ?? [];
         u.currentAvatarImageUrl = user.currentAvatarImageUrl ?? '';
@@ -141,20 +142,16 @@ export type FriendsListRequestData =
     MODERATOR = "moderator"
 }*/
 
-export type CombinedUser
+export type CombinedUser =
 {
-  user: LimitedUser
-  world: World;
-  instance: Instance;
+  user: DashboardUser;
+  imageUrl?: string;
+  profile?: ProfileDetails;
+  world?: World;
+  instance?: Instance;
 }
 
-export enum UserStatus {
-    JOINME = "join me",
-    ACTIVE = "active",
-    ASKME = "ask me",
-    DND = "busy",
-    OFFLINE = "offline"
-}
+export type { UserStatus } from 'vrchat';
 
 export type VRCWorld = {
     authorId: string;

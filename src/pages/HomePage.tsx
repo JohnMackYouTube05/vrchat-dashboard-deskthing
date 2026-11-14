@@ -1,171 +1,80 @@
 import { useNavigate } from 'react-router-dom';
 import UserCard from '../components/UserCard';
-import { useState, useEffect } from 'react';
-import { createDeskThing } from '@deskthing/client';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { dt } from '../deskthing';
 import { useUserContext } from '../context/UserContext';
-const dt = createDeskThing<ToClientData, GenericTransitData>();
-//const users = dt.fetch(, {type: "friendslist", })
-type ToClientData = {
-    type: string;
-    payload: string;
-};
-
-enum VRC_REQUESTS {
-    GETLIST = "vrc_friendslist",
-    GET = "get"
-}
-
-type GenericTransitData = {
-    type: VRC_REQUESTS.GET;
-    request: string;
-    payload?: string;
-};
+import type { CombinedUser } from '../types/types';
 
 export default function HomePage() {
-    
-      async function getCurrentUsername(): Promise<any> {
-        return new Promise((resolve, reject) => {
-          dt.fetch(
-            { type: VRC_REQUESTS.GET, request: 'logged_in_username' },
-            { type: 'logged_in_username' },
-            (data) => {
-              if (data) {
-                console.log("Username received from server.");
-                console.log(data.payload);
-                setUsername(data.payload);
-                resolve(data.payload); // ✅ resolve promise with payload
-              } else {
-                reject(new Error("No username received"));
-              }
-            }
-          );
-        });
-      }
-    
-      const handleFriendsList = async () => {
-        setIsLoading(true);
-        setDebug("📡 Trying to contact server...");
-      
-        try {
-          // Send the request
-          dt.send({
-            type: VRC_REQUESTS.GET,
-            request: "vrc_friendslist"
-          });
-      
-          // Clear existing timeout if any
-          if (timeoutRef) {
-            clearTimeout(timeoutRef);
-          }
-      
-          // Set a new timeout
-          timeoutRef = setTimeout(() => {
-            setDebug("⏱️ Timed out!\nDid you log into VRChat?");
-            setIsLoading(false);
-          }, 10000);
-        } catch (err) {
-          console.error("[VRCHAT CLIENT] ❌ dt.send failed:", err);
-          setDebug("Failed to send request to server.");
-          setIsLoading(false);
-        }
-      };
-      
-        const {users, setUsers} = useUserContext();
-        const [loggedInUsername, setUsername] = useState<string>("user");
-        
-          const [loading, setIsLoading] = useState(false);
-          const [debug, setDebug] = useState("");
-          let timeoutRef: NodeJS.Timeout | null = null;
-          useEffect(() => {
-            // Flag to prevent setting state after unmount
-            let cancelled = false;
-            async function resolveUsername()
-            {
-              try {
-              const user = await getCurrentUsername();
-              setUsername(user);
-              }
-              catch (err)
-              {
-                console.error("Error while fetching username:", err)
-              }
-            }
-            
-            // Setup listener BEFORE sending the request
-             const removeListener = dt.on("vrc_friendslist", (data) => {
-              if (cancelled) return;
-          
-              setIsLoading(false);
-              if (timeoutRef) {
-                clearTimeout(timeoutRef);
-              }
-          
-              setDebug("✅ Received data from server");
-          
-              if (data.payload) {
-                // Assume the payload is already JSON-serializable
-                const friends = data.payload;
-                setUsers(JSON.parse(friends));
-              } else {
-                setDebug("⚠️ Payload was empty or malformed.");
-              }
-            }); 
-          
-            // Send request AFTER listener is ready
-            setDebug("📡 Requesting friends list...");
-            setIsLoading(true);
-            resolveUsername();
-            handleFriendsList();
-          }, [setUsers]);
-    
-          
-      function getTimeGreeting() : string
-      {
-         const now: Date = new Date(); //Get current date/time
-         let hourOfDay = now.getHours(); //Get current hour of the day
-         if (hourOfDay < 5 || hourOfDay >= 17) { return "evening"; } //If it's between 5 PM and 4:59 AM, it's evening/night.
-         else if (hourOfDay >= 12 && hourOfDay <= 16) { return "afternoon"; } //If it's between 12 PM and 4 PM, it's afternoon.
-         else { return "morning"; } //Otherwise, it's morning time. (5 AM - 11:59 AM)
-      }
-     
-    
-    
-    const navigate = useNavigate();
-    return (
-      <div className="bg-cyan-950 w-screen flex justify-center items-center">
-        {users.length > 0 ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-4 items-center self-start">
-            
-            {users.map(u => (          
-            <div
-            key={u.user.displayName}
-            onClick={() => navigate(`/user/${encodeURIComponent(u.user.displayName)}`)}
-            className="cursor-pointer"
-          >
-            <UserCard key={u.user.id} user={u.user} />
-          </div>
-            ))} 
-          </div>
-          /*JSON.parse(users).map((user, index) => (
-            <UserCard key={index} user={user} />
-          ))*/
-         
-        ) : (
-          <div className="flex items-center justify-center flex-col">
-            <p className="font-bold text-5xl text-white">{`Good ${getTimeGreeting()}, ${loggedInUsername}!`}</p>
-            <button
-              disabled={loading}
-              className="p-4 flex items-center disabled:bg-neutral-800 transition-colors disabled:text-zinc-200 bg-neutral-700 rounded-lg mt-5 text-4xl text-white text-semibold"
-              onClick={handleFriendsList}
-            >
-              <p className="mr-2">Request Friends List</p>
-              {loading && (
-                <div className="animate-spin border-t-2 w-10 h-10 rounded-full" />
-              )}
-            </button>
-            <p className="font-mono text-white text-2xl mt-2">{debug}</p>
-          </div>
-        )}
+  const { users } = useUserContext();
+  const [username, setUsername] = useState('user');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const timeout = useRef<ReturnType<typeof setTimeout>>();
+  const navigate = useNavigate();
+
+  const finish = useCallback(() => {
+    clearTimeout(timeout.current);
+    setLoading(false);
+  }, []);
+
+  const requestFriends = useCallback(() => {
+    clearTimeout(timeout.current);
+    setLoading(true);
+    setMessage('Connecting to VRChat...');
+    // Set the timer before sending; a fast response can clear it immediately.
+    timeout.current = setTimeout(() => {
+      setLoading(false);
+      setMessage('The server has not responded yet. Check DeskThing, then try again.');
+    }, 45_000);
+    try { dt.send({ type: 'vrc_request', request: 'vrc_friendslist' }); }
+    catch {
+      finish();
+      setMessage('Could not contact DeskThing. Check the desktop app.');
+    }
+  }, [finish]);
+
+  useEffect(() => {
+    const removeFriends = dt.on('vrc_friendslist', data => {
+      finish();
+      try {
+        const friends: CombinedUser[] = JSON.parse(data.payload);
+        if (!Array.isArray(friends)) throw new Error('Invalid friends list');
+        setMessage(friends.length ? '' : 'No friends are online right now.');
+      } catch { setMessage('DeskThing returned an unreadable friends list. Try again.'); }
+    });
+    const removeStatus = dt.on('vrc_status', data => setMessage(data.payload));
+    const removeError = dt.on('vrc_error', data => { finish(); setMessage(data.payload); });
+    const removeUsername = dt.on('logged_in_username', data => setUsername(data.payload));
+    requestFriends();
+    return () => {
+      clearTimeout(timeout.current);
+      removeFriends();
+      removeStatus();
+      removeError();
+      removeUsername();
+    };
+  }, [finish, requestFriends]);
+
+  const hour = new Date().getHours();
+  const greeting = hour < 5 || hour >= 17 ? 'evening' : hour >= 12 ? 'afternoon' : 'morning';
+  return (
+    <div className="bg-cyan-950 min-h-screen w-screen flex flex-col items-center p-4">
+      <div className="flex items-center justify-between gap-4 w-full text-white">
+        <p className="font-bold text-2xl">Good {greeting}, {username}!</p>
+        <button disabled={loading} onClick={requestFriends}
+          className="p-3 bg-neutral-700 rounded-lg text-xl disabled:bg-neutral-800 disabled:text-zinc-400">
+          {loading ? 'Loading...' : 'Refresh Friends'}
+        </button>
       </div>
-    );
+      <p role="status" className="text-white text-xl mt-2">{message}</p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 p-4 self-start">
+        {users.map(friend => (
+          <div key={friend.user.id} onClick={() => navigate(`/user/${encodeURIComponent(friend.user.displayName)}`)} className="cursor-pointer">
+            <UserCard user={friend.user} worldName={friend.world?.name} imageUrl={friend.profile?.imageUrl || friend.imageUrl} />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }

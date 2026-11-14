@@ -1,433 +1,209 @@
-import { createDeskThing, DeskThing } from '@deskthing/server';
-import { AppSettings, DESKTHING_EVENTS, SETTING_TYPES } from '@deskthing/types';
-import { useState } from 'react';
-import * as Desk from '@deskthing/types';
-//import * as promptSync from 'prompt-sync';
-import promptSync from 'prompt-sync';
-import * as vrchat from 'vrchat'; //Import unofficial VRChat API
-const prompt = promptSync();
-import pkg from 'axios-cookiejar-support';
-import { AxiosInstance } from 'axios';
-const axiosCookieJarSupport = pkg.default;
-import {OurLimitedUser, ILimitedUserDTO, VRCWorld, VRCInstance, CombinedUser} from '../src/types/types';
-import axios, { AxiosError } from 'axios';
-import { CookieJar } from 'tough-cookie';
-import fs from 'fs';
-import { serialize } from 'v8';
-import { saveImageReferenceFromURL, saveImageFromFileObject, downloadVRCImage } from './utils';
-import { config } from 'dotenv';
+import { createDeskThing } from '@deskthing/server';
+import { DESKTHING_EVENTS, SETTING_TYPES, type AppSettings } from '@deskthing/types';
+import type { LimitedUser, World, Instance } from 'vrchat';
+import type { CombinedUser } from '../src/types/types';
+import { downloadVRCImage } from './utils';
+import { loadProfile } from './profile';
+import { profileImages, type ProfileDetails } from '../src/types/profile';
+import { VRCSession, LoginRequired, safeError, type SavedSession } from './session';
 
-
-type ToClientData = {
-	type: "vrc_friendslist";
-	payload: string;
+type ClientRequest = { type: 'vrc_request'; request: string; payload?: { world?: string; instanceid?: string; userId?: string } };
+const DK = createDeskThing<ClientRequest, { type: string; payload: string }>();
+let settings: AppSettings = {};
+let initialized: Promise<void> | undefined;
+let settingsLoaded = false;
+let refresh: Promise<void> | undefined;
+let latestFriends: { account: string; username: string; users: CombinedUser[] } | undefined;
+let stopped = false;
+const value = (key: string) => String(settings[key]?.value ?? '');
+const status = (message: string, error = false) => {
+  if (!stopped) DK.send({ type: error ? 'vrc_error' : 'vrc_status', payload: message });
 };
 
-enum VRC_REQUESTS {
-	GETLIST = "vrc_friendslist",
-	GET = "get"
-}
-
-type GenericTransitData = {
-	type: VRC_REQUESTS.GET;
-	request: "vrc_friendslist";
-	payload?: string;
-};
-let configuration: vrchat.Configuration;
-let cookieJar: CookieJar;
-let axiosInstance: AxiosInstance;
-let authApi: vrchat.AuthenticationApi;
-let friendsApi: vrchat.FriendsApi;
-let worldsApi: vrchat.WorldsApi;
-let instanceApi: vrchat.InstancesApi;
-async function loadCookieJar(): Promise<CookieJar> {
-  if (fs.existsSync("cookies.json")) {
-    const data = fs.readFileSync("cookies.json", 'utf-8');
-    const json = JSON.parse(data);
-    return CookieJar.fromJSON(json);
-  } else {
-    const settings = DK.getSettings()
-    if (settings['cookiejar'])
-    {
-      const json = JSON.parse(settings['cookiejar']['value'])
-      return CookieJar.fromJSON(json);
+const session = new VRCSession({
+  credentials: () => ({ username: value('email'), password: value('password'), code: value('twoFactorCode') }),
+  load: async () => {
+    const data = await DK.getData();
+    if (!data) throw new LoginRequired('DeskThing could not load saved session data. Try again once the desktop app is ready.');
+    return data?.vrchatSession as SavedSession | undefined;
+  },
+  save: async (vrchatSession) => { await DK.saveData({ vrchatSession }); },
+  consumeCode: async () => {
+    if (settings.twoFactorCode?.type === SETTING_TYPES.STRING) {
+      settings = { ...settings, twoFactorCode: { ...settings.twoFactorCode, value: '' } };
+      await DK.saveSettings(settings);
     }
-  }
-  return new CookieJar();
-}
-
-
-async function saveCookieJar(jar: CookieJar) {
-  const json = jar.toJSON();
-  fs.writeFileSync(COOKIE_FILE, JSON.stringify(json, null, 2));
-  var settings = await DK.getSettings();
-  if (settings)
-  {
-    settings['cookiejar']['value'] = JSON.stringify(json);
-    DK.saveSettings(settings);
-  }
-  
-}
-
-const DK = createDeskThing(); //Instantiate DeskThing server.
-var loggedIn = false;
-
-const start = async () => {
-  
-  console.log('Starting, initializing settings...');
-  const settings = {
-	"email": {
-		disabled: false,
-		value: '',
-		id: 'email',
-		type: SETTING_TYPES.STRING,
-		label: "Email Address",
-		description: "The email address you use to log into VRChat."
-	},
-	"password": {
-		disabled: false,
-		value: '',
-		id: 'password',
-		type: SETTING_TYPES.STRING,
-		label: "VRChat Password",
-		description: "The password you use to log into VRChat. This will be sent to VRChat servers and nowhere else."
-	},
-	"twoFactorCode": {
-		disabled: false,
-		value: '',
-		id: 'two_factor_code',
-		type: SETTING_TYPES.STRING,
-		label: '2FA Code',
-		description: 'The two-factor authentication code you get in your Authenticator app or email inbox. This will be used to authenticate you the first time this app is used, or if your authentication token ever gets invalidated.'
-	},
-  "cookieJar": {
-    disabled: false,
-    value: '',
-    id: 'cookiejar',
-    type: SETTING_TYPES.STRING,
-    label: "Cookie Jar (DO NOT EDIT MANUALLY)",
-    description: "The only way I can seem to get the cookie jar to function in this program outside of the dev environment."
-  }
-  };
-  DK.initSettings(settings);
-  console.log('Started the server');
-  //await DK.saveSettings(settings);
-
-
-
-  //VRCLogin();
-  //getFriendsList();
-};
-
-DK.once(DESKTHING_EVENTS.SETTINGS, async (setting) => {
-	console.log("[SETTINGS]", JSON.stringify(setting.payload, null, 2));
-	if (!setting.payload.email.value || !setting.payload.password.value || !setting.payload.two_factor_code.value)
-	{
-		
-		console.warn("[DESKTHING SETTINGS (VRCHAT)] Missing login credentials.")
-	} else if (setting.payload.email.value && setting.payload.password.value)
-	{
-
-		/*if (loggedIn == false)
-		{ await VRCLogin(); }*/
-	}
+  },
 });
-const stop = async () => {
-  console.log('[VRCHAT SERVER] Stopped the server');
-  
-};
 
-let loggedInUserDisplayName: string;
-let settingsGlobal: AppSettings;
-async function VRCLogin() {
-  cookieJar = await loadCookieJar();
-  const settings = await DK.getSettings();
-
-  const options = {
-    headers: {
-      "User-Agent": `VRChatDashboard-DeskThing/0.11.6 ${settings?.email?.value || "unknown"}`
-    }
-  };
-
-  configuration = new vrchat.Configuration({
-    username: settings?.email?.value.toString() ?? "email@example.com",
-    password: settings?.password?.value.toString() ?? "password",
-    baseOptions: {
-      jar: cookieJar,
-      headers: {
-        "User-Agent": `VRChatDashboard-DeskThing/0.11.6`
-      }
-    }
+async function initialize() {
+  const stored = await DK.getSettings();
+  if (!stored) throw new LoginRequired('DeskThing could not load settings. Restart the app once the desktop app is ready.');
+  const field = (id: string, label: string, description: string) => ({
+    id, label, description, type: SETTING_TYPES.STRING as const,
+    value: id === 'twoFactorCode' ? '' : String(stored?.[id]?.value ?? ''),
   });
-
-  configuration.baseOptions.headers["User-Agent"] = `VRChatDashboard-DeskThing/0.11.6 ${configuration.username}`;
-
-  axiosInstance = axios.create({
-    jar: cookieJar,
-    withCredentials: true
+  // setSettings is awaited; this SDK's initSettings starts an unawaited settings write.
+  await DK.setSettings({
+    email: field('email', 'VRChat Username', 'Your VRChat account username (not your display name).'),
+    password: field('password', 'VRChat Password', 'Stored locally by DeskThing. Used only when the saved session is no longer valid.'),
+    twoFactorCode: field('twoFactorCode', '2FA Code', 'When the display asks, enter a fresh authenticator or email code and save. Cleared after submission.'),
   });
-
-  axiosCookieJarSupport(axiosInstance);
-
-  console.log("[VRCHAT SERVER] Connecting to VRChat...");
-  authApi = new vrchat.AuthenticationApi(configuration, undefined, axiosInstance);
-
-  const resp = await authApi.getCurrentUser(options);
-  let currentUser = resp.data;
-  console.log("[VRCHAT AUTH] Logging in...");
-
-  if (currentUser["requiresTwoFactorAuth"] === "emailOtp") {
-    console.log("[VRCHAT AUTH] User has email 2FA. Sending code.");
-    await authApi.verify2FAEmailCode(
-      { code: settings?.twoFactorCode?.value.toString() ?? "123456" },
-      options
-    );
-    currentUser = (await authApi.getCurrentUser(options)).data;
-    await saveCookieJar(cookieJar);
-    loggedIn = true;
-  }
-
-  if (currentUser["requiresTwoFactorAuth"] === "totp") {
-    console.log("[VRCHAT AUTH] user requires 2-factor auth. Sending code.");
-    console.log("[VRCHAT AUTH] Using code", settings?.twoFactorCode?.value ?? "123456");
-    await authApi.verify2FA(
-      { code: settings?.twoFactorCode?.value.toString() ?? "123456" },
-      options
-    );
-    currentUser = (await authApi.getCurrentUser(options)).data;
-    await saveCookieJar(cookieJar);
-    loggedIn = true;
-  }
-
-  console.log(`[VRCHAT AUTH] Logged in as: ${currentUser.displayName}`);
-
-  friendsApi = new vrchat.FriendsApi(configuration, undefined, axiosInstance);
-  console.log("[GLOBAL VARS] Instantiated Friends API:", friendsApi);
-  worldsApi = new vrchat.WorldsApi(configuration, undefined, axiosInstance);
-  console.log("[GLOBAL VARS] Instantiated Worlds API:", worldsApi);
-  instanceApi = new vrchat.InstancesApi(configuration, undefined, axiosInstance);
-  console.log("[GLOBAL VARS] Instantiated Instances API:", instanceApi);
-
-  loggedIn = true;
-  return axiosInstance;
+  settings = (await DK.getSettings()) ?? stored ?? {};
+  // The replacement jar is private app data, not a user-editable setting.
+  await DK.deleteSettings(['cookieJar', 'cookiejar', 'two_factor_code']);
+  settingsLoaded = true;
 }
 
-
-function getFileIdFromUrl(url: string) : string
-{
-	console.log("Extracting file ID from ", url)
-	let urlSegments = url.split('/');
-	for (let i = 0; i < urlSegments.length; i++) {
-		if (urlSegments[i].indexOf("file_") != -1) //If the segment has "file_" in it, it's a valid File ID.
-		{
-			console.log("Got valid file ID at index ", i, ": ", urlSegments[i]);
-			return urlSegments[i];
-		}
-	}
-	console.error(`Could not extract file ID from ${url}.`)
-	return 'Invalid segment';
+function ready() {
+  return initialized ??= initialize().catch(error => { initialized = undefined; throw error; });
 }
 
-async function getInstance(worldId:string, instanceId: string)
-{
-	console.log("[VRCHAT INSTANCE API] Sending instance data to client.")
-	
-  const instanceData = await instanceApi.getInstance(worldId, instanceId, configuration.baseOptions)
-  if (instanceData != null)
-  {
-    console.log('[VRCHAT INSTANCE API] Sending instance data to client.')
-    DK.send({type: 'instance', payload: JSON.stringify(instanceData.data)});
-    return instanceData.data;
+const worldCache = new Map<string, Promise<World>>();
+const instanceCache = new Map<string, Promise<Instance>>();
+const profileCache = new Map<string, { expires: number; result: Promise<ProfileDetails> }>();
+async function sendProfile(id: string) {
+  const account = value('email').trim().toLowerCase();
+  const key = `${account}:${id}`;
+  let cached = profileCache.get(key);
+  if (!cached || cached.expires < Date.now()) {
+    cached = { expires: Date.now() + 5 * 60_000, result: loadProfile(id, session.client, operation => session.read(operation)) };
+    profileCache.set(key, cached);
+    void cached.result.catch(() => { profileCache.delete(key); });
   }
-  else
-  {
-    console.warn('[VRCHAT INSTANCE API] Failed to get instance, call to do so returned null.')
+  try {
+    const profile = await cached.result;
+    if (!profile.imageUrl) cached.expires = 0; // A retry should try the failed download again.
+    if (!stopped && account === value('email').trim().toLowerCase()) {
+      DK.send({ type: 'vrc_profile', payload: JSON.stringify(profile) });
+    }
+  } catch (error) {
+    if (!stopped && account === value('email').trim().toLowerCase()) {
+      DK.send({ type: 'vrc_profile_error', payload: JSON.stringify({ id, message: safeError(error) }) });
+    }
   }
 }
-async function getFriendsList ()
-{
-  
-	
+function getWorld(id: string) {
+  if (!worldCache.has(id)) {
+    const request = session.read(async () => (await session.client.get<World>(`/worlds/${encodeURIComponent(id)}`)).data)
+      .then(async world => {
+        world.imageUrl = await downloadVRCImage(world.imageUrl, session.client, id) ?? world.imageUrl;
+        return world;
+      });
+    worldCache.set(id, request);
+    void request.catch(() => { worldCache.delete(id); });
+  }
+  return worldCache.get(id)!;
+}
 
-	// Step 2. VRChat consists of several API's (WorldsApi, UsersApi, FilesApi, NotificationsApi, FriendsApi, etc...)
-	// Here we instantiate the Authentication API which is required for logging in.
-	//const AuthenticationApi = new vrchat.AuthenticationApi(configuration, undefined, axiosInstance);
-	
-	
-	// Pull the list out of the ApiResponse              v–v–v  rename right away
-	console.log("[VRCHAT FRIENDS API] Pulling 540 friends from list...")
-	try {
-		
-	
-		console.log("[VRCHAT FRIENDS API] We are not authorized. Run login sequence.")
-		await VRCLogin();
-	  const {data: users} = await friendsApi.getFriends(0, 50, false, configuration.baseOptions);
-		console.log("[VRCHAT FRIENDS API] Processing friends in parallel")
-	// Process every friend in parallel
-		await Promise.all(
-			users.map(async (u) => {
-				// VRChat’s real field is `profilePicOverride`, not `profilePicOverrideThumbnail`
-				const fallbackUrl =
-				u.profilePicOverride?.trim().length
-					? u.profilePicOverride
-					: u.currentAvatarThumbnailImageUrl;
+function getInstance(world: string, instance: string) {
+  const key = `${world}:${instance}`;
+  if (!instanceCache.has(key)) {
+    const request = session.read(async () => (await session.client.get<Instance>(`/instances/${encodeURIComponent(world)}:${encodeURIComponent(instance)}`)).data);
+    instanceCache.set(key, request);
+    void request.catch(() => { instanceCache.delete(key); });
+  }
+  return instanceCache.get(key)!;
+}
 
-				if (!fallbackUrl) {
-				console.warn(`[VRCHAT FRIENDS API] No thumbnail for ${u.displayName}`);
-				
-				return;
-				}
-				u.profilePicOverride = await downloadVRCImage(fallbackUrl ? fallbackUrl : '', cookieJar, configuration, u.id);
-			
-			})
-			);
-			
-      const comUsers: CombinedUser[] = [];
-      for (let i = 0; i < users.length; i++) {
-        const user = users[i];
-        const comUser: CombinedUser = {
-          user,
-          world: undefined as any,
-          instance: undefined as any,
-        };
-
-        if (user.location && !(["offline", "private", "traveling"].includes(user.location ? user.location : "private"))) {
-          const [worldId, instanceId] = user.location.toString().split(':');
-          comUser.world = await getWorldData(worldId);
-          comUser.instance = await getInstance(worldId, instanceId);
-        }
-
-        comUsers.push(comUser);
+async function refreshFriends() {
+  await ready();
+  const account = value('email').trim().toLowerCase();
+  status('Connecting to VRChat...');
+  const user = await session.ensure();
+  DK.send({ type: 'logged_in_username', payload: user.displayName });
+  status('Loading friends...');
+  const users = await session.read(async () => (await session.client.get<LimitedUser[]>('/auth/user/friends', { params: { offset: 0, n: 50, offline: false } })).data);
+  const combined: CombinedUser[] = users.map(friend => ({ user: friend }));
+  if (account !== value('email').trim().toLowerCase() || stopped) return;
+  latestFriends = { account, username: user.displayName, users: combined };
+  // Deliver useful data before optional images/world lookups.
+  DK.send({ type: 'vrc_friendslist', payload: JSON.stringify(combined) });
+  worldCache.clear();
+  instanceCache.clear();
+  let next = 0;
+  // Limit the whole workload rather than launching 50 downloads at once.
+  await Promise.all(Array.from({ length: Math.min(3, combined.length) }, async () => {
+    while (next < combined.length && !stopped && account === value('email').trim().toLowerCase()) {
+      const friend = combined[next++];
+      for (const image of profileImages(friend.user)) {
+        friend.imageUrl = await downloadVRCImage(image, session.client, friend.user.id);
+        if (friend.imageUrl) break;
       }
-      const serialized = JSON.stringify(comUsers, null, 2);
-			DK.send({type: "vrc_friendslist", payload: serialized})
-			console.log("Data has been sent for processing.")
-			return serialized;
-      
-	}
-	catch (error)
-	{
-    
-		console.warn("Friends list grab failed with error:", error.message);
-    console.warn("Friends list stack trace: ", error.stack);
-		if (error.message.indexOf('401') > -1) {
-			//Unauthorized
-			loggedIn = false;
-			//await VRCLogin();
-		}
-	}
-	
-
-		/*await filesApi.getFile(fallbackUrl.split('/')[6], options).then (async (fileInfo) =>
-		{
-			const localUrl = await saveImageReferenceFromURL(fileInfo.data['versions'][fileInfo.data['versions'].length - 1]['file']['url'], `${u.id}.png`, options);
-			u.profilePicOverride = localUrl;
-		})
-		*/
-
-		
-		/*await filesApi.downloadFileVersion(fallbackUrl.split('/')[6], Number.parseInt(fallbackUrl.split('/')[7]), options).then(async (url) => //Extract file ID from the fallback URL.
-		{
-			//console.log("Downloading thumbnail from", url.data);
-			
-			console.log(`Image Data is type ${}`);
-			//let f = new File(url.data, `${u.id}.png`);
-			console.log(`Preview of data: ${url.data.slice(0, 100)}`);
-			const localUrl = await saveImageFromFileObject(url.data, `${u.id}.png`);
-		});*/
-			// store the local copy wherever you want
-			
-		
-		
-
-		
-	
-
-// `users` now contains the modified friend objects
-
-	
-	
-	
-	//console.log(`Current Online Friends: ${currentOnlineUsers.data}`);
-	//let friends = Array<OurLimitedUser>();
-	//console.log("Adding friends to new array.");
-	/*for (let index = 0; index < currentOnlineUsers.data.length; index++) {
-		friends[index] = OurLimitedUser.fromVRCLimitedUser(currentOnlineUsers.data[index]);
-		console.log("Added friend " + currentOnlineUsers.data[index].displayName);
-	}*/
-	console.log("Sending data to client");
-	
-	
-	/*const serialized = JSON.stringify(currentOnlineUsers.data, null, 2);
-	DK.send({type: "vrc_friendslist", payload: serialized})
-	console.log("Data has been sent for processing.")
-	return serialized;*/
-}
-
-
-async function getWorldData(WorldId: string)
-{
-	console.log(`[VRCHAT WORLDS API] Grabbing world information for World ${WorldId}`)
-	const worldInformation = (await worldsApi.getWorld(WorldId));
-
-  const worldImage = await downloadVRCImage(worldInformation.data.imageUrl, cookieJar, configuration, worldInformation.data.id);
-	
-  worldInformation.data.imageUrl = worldImage ? worldImage : worldInformation.data.imageUrl; //If the download fails, keep it set to the original URL. This will break the image on Car Thing, but at least the program shouldn't crash.
-
-	console.log("[VRCHAT SERVER] Sending world data to client");
-	const serializedWorldInfo = JSON.stringify(worldInformation.data, null, 2);
-	console.log(`[VRCHAT SERVER] Got world info:  ${serializedWorldInfo}`);
-	
-	DK.send({type: "world", payload: serializedWorldInfo});
-	console.log("[VRCHAT SERVER] World data sent for processing.");
-  return worldInformation.data;
-}
-
-// Main Entrypoint of the server
-DK.on(DESKTHING_EVENTS.START, start);
-
-// Main exit point of the server
-DK.on(DESKTHING_EVENTS.STOP, stop);
-
-DK.on(VRC_REQUESTS.GET, async (data) => {
-	switch (data.request)
-	{
-		case 'vrc_friendslist': 
-			console.log("[VRCHAT SERVER] Grabbing friends list...");
-			if (loggedIn == false)
-      {
-        VRCLogin();
+      const location = friend.user.location;
+      if (location?.startsWith('wrld_') && location.includes(':')) {
+        const separator = location.indexOf(':');
+        const worldId = location.slice(0, separator);
+        const instanceId = location.slice(separator + 1);
+        const [world, instance] = await Promise.allSettled([getWorld(worldId), getInstance(worldId, instanceId)]);
+        if (world.status === 'fulfilled') friend.world = world.value;
+        if (instance.status === 'fulfilled') friend.instance = instance.value;
       }
-			getFriendsList().then(friendsList => {
-				if (friendsList)
-					{
-						console.log("Sending friends list to Car Thing.")
-						const serialized = friendsList;
-						//console.log("Sending serialized list: ", friendsList);
-						DK.send({type: "vrc_friendslist", payload: serialized});
-						//DK.send({})
-						//cachedFriendsList = friendsList;
-					} else {
-						console.error("Error while pulling friends list from VRChat.")
-					}
-			})
-			break;
-		case 'world':
-			console.log(`[VRCHAT SERVER] Retrieving world information for world ${data.payload.world.split(':')[0]}`); //Location object comes through in this format [worldId]:[instanceId]. We just need to split it.
-			getWorldData(data.payload.world.split(':')[0]);
-			break;
-		case 'logged_in_username':
-			console.log("[VRCHAT SERVER] Sending logged in user's display name.");
-			DK.send({type: 'logged_in_username', payload: loggedInUserDisplayName});
-      break;
-    case 'instance':
-      console.log(`[VRCHAT SERVER] Grabbing instance information for ID ${data.payload.instanceid}`);
-      await getInstance(data.payload.instanceid.split[0], data.payload.instanceid.split[1]);
-      break;
-	}
-});
+    }
+  }));
+  if (!stopped && account === value('email').trim().toLowerCase()) {
+    DK.send({ type: 'vrc_friendslist', payload: JSON.stringify(combined) });
+    status(users.length ? '' : 'No friends are online right now.');
+  }
+}
 
-DK.on(DESKTHING_EVENTS.DATA, async (data) => {
-	console.log("Got data: ", data.payload);
+function requestFriends() {
+  if (refresh && latestFriends?.account === value('email').trim().toLowerCase()) {
+    // A client can reconnect while optional enrichment is still running.
+    DK.send({ type: 'logged_in_username', payload: latestFriends.username });
+    DK.send({ type: 'vrc_friendslist', payload: JSON.stringify(latestFriends.users) });
+  }
+  return refresh ??= refreshFriends().catch(error => {
+    const message = safeError(error);
+    status(message, true);
+    console.warn(`[VRCHAT] ${message}`); // No request objects, cookies, or credentials.
+  }).finally(() => { refresh = undefined; });
+}
+
+DK.on(DESKTHING_EVENTS.START, async () => {
+  stopped = false;
+  try { await ready(); }
+  catch { status('Could not load DeskThing settings. Restart the app.', true); }
 });
-//await VRCLogin();	
+DK.on(DESKTHING_EVENTS.STOP, () => { stopped = true; });
+DK.on(DESKTHING_EVENTS.SETTINGS, async event => {
+  const previousAccount = value('email').trim().toLowerCase();
+  const before = JSON.stringify([value('email'), value('password'), value('twoFactorCode')]);
+  settings = event.payload;
+  if (settingsLoaded && previousAccount !== value('email').trim().toLowerCase()) {
+    latestFriends = undefined;
+    profileCache.clear();
+    DK.send({ type: 'vrc_friendslist', payload: '[]' });
+    DK.send({ type: 'logged_in_username', payload: 'user' });
+  }
+  const after = JSON.stringify([value('email'), value('password'), value('twoFactorCode')]);
+  if (settingsLoaded && before !== after && (value('twoFactorCode') || value('email') && value('password'))) {
+    await refresh;
+    if (!stopped) await requestFriends();
+  }
+});
+DK.on('vrc_request', async data => {
+  try {
+    await ready();
+    switch (data.request) {
+      case 'vrc_friendslist': await requestFriends(); break;
+      case 'profile': {
+        const id = data.payload?.userId;
+        if (id && /^usr_[a-zA-Z0-9_-]+$/.test(id)) await sendProfile(id);
+        break;
+      }
+      case 'logged_in_username': break; // Sent by refreshFriends after authentication.
+      case 'world': {
+        const id = String(data.payload?.world ?? '').split(':')[0];
+        if (id.startsWith('wrld_')) DK.send({ type: 'world', payload: JSON.stringify(await getWorld(id)) });
+        break;
+      }
+      case 'instance': {
+        const location = String(data.payload?.instanceid ?? '');
+        const separator = location.indexOf(':');
+        if (separator > 0) DK.send({ type: 'instance', payload: JSON.stringify(await getInstance(location.slice(0, separator), location.slice(separator + 1))) });
+        break;
+      }
+    }
+  } catch (error) { status(safeError(error), true); }
+});
